@@ -1,0 +1,9 @@
+[mcp_servers.adobe_wiki]
+command = "node"
+transport = "stdio"
+args = ["<MCP_SERVER_FILE_LOCATION>"]
+
+[mcp_servers.adobe_wiki.env]
+# These will be overridden by environment variables if set
+WIKI_MCP_HOST = "<WIKI_MCP_HOST>"
+WIKI_MCP_TOKEN = "<WIKI_MCP_TOKEN>"
