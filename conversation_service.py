@@ -2,17 +2,17 @@ import json
 from langchain.messages import HumanMessage
 
 from agent_manager import get_agent, get_checkpointer
-from dto import ConversationHistory
-from utils import get_messages_details
+from dto import ConversationHistory, MessageDetail
+from utils import MessageConverter
 
 async def get_state(config: dict) -> dict:
     return await get_agent().aget_state(config)
 
-async def chat_with_agent(thread_id: str, input_messages: list[str], user_id: str) -> ConversationHistory:
-    conversation_messages = [HumanMessage(content=message) for message in input_messages]
+async def chat_with_agent(thread_id: str, input_messages: list[MessageDetail], user_id: str) -> ConversationHistory:
     # Use thread_id from request for conversation tracking
+    langchain_messages = MessageConverter.raw_to_langchain(input_messages)
     config = {"configurable": {"thread_id": f"{user_id}_{thread_id}", "user_id": user_id}}
-    result = await get_agent().ainvoke({"messages": conversation_messages}, config=config)
+    result = await get_agent().ainvoke({"messages": langchain_messages}, config=config)
     # Get the state from the checkpointer
     state = await get_state(config)
     
@@ -25,29 +25,25 @@ async def chat_with_agent(thread_id: str, input_messages: list[str], user_id: st
             break
         filtered_messages.append(msg)
 
-    messages = get_messages_details(filtered_messages[::-1], thread_id)
+    messages = MessageConverter.langchain_to_raw(filtered_messages[::-1])
         
     return ConversationHistory(thread_id=thread_id, messages=messages, user_id=user_id)
 
-async def chat_with_agent_stream_generator(thread_id: str, input_messages: list[str], user_id: str):
-    conversation_messages = [HumanMessage(content=message) for message in input_messages]
+async def chat_with_agent_stream_generator(thread_id: str, input_messages: list[MessageDetail], user_id: str):
+    langchain_messages = MessageConverter.raw_to_langchain(input_messages)
     config = {"configurable": {"thread_id": f"{user_id}_{thread_id}", "user_id": user_id}}
     
-    try:
-        async for chunk in get_agent().astream({"messages": conversation_messages}, config, stream_mode="updates"):
-            messages = []
-            if "llm_call" in chunk:
-                messages = chunk["llm_call"]["messages"]
-            elif "tool_node" in chunk:
-                messages = chunk["tool_node"]["messages"]
-            
-            if len(messages) > 0:
-                messages = get_messages_details(messages, thread_id)
-                conv_history = ConversationHistory(thread_id=thread_id, messages=messages, user_id=user_id)
-                yield f"data: {conv_history.model_dump_json()}\n\n"
+    async for chunk in get_agent().astream({"messages": langchain_messages}, config, stream_mode="updates"):
+        messages = []
+        if "llm_call" in chunk:
+            messages = chunk["llm_call"]["messages"]
+        elif "tool_node" in chunk:
+            messages = chunk["tool_node"]["messages"]
         
-    except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        if len(messages) > 0:
+            messages = MessageConverter.langchain_to_raw(messages)
+            conv_history = ConversationHistory(thread_id=thread_id, messages=messages, user_id=user_id)
+            yield conv_history
     
 async def get_all_conversation_ids(user_id: str) ->list[str]:
     thread_ids = set()
@@ -75,7 +71,7 @@ async def get_conversation_history_from_agent(thread_id: str, user_id: str) -> C
         return ConversationHistory(thread_id=thread_id, messages=[], user_id=user_id)
     
     # Extract and format messages
-    messages = get_messages_details(state.values["messages"], thread_id)
+    messages = MessageConverter.langchain_to_raw(state.values["messages"])
     
     return ConversationHistory(thread_id=thread_id, messages=messages, user_id=user_id)
     

@@ -1,28 +1,8 @@
-from langchain.messages import HumanMessage, ToolMessage
+from typing import Any, List
+from langchain.messages import AnyMessage, HumanMessage, ToolMessage
 import tomllib
 
-def get_messages_details(conv_messages, thread_id):
-    # Extract and format messages
-    messages = []
-    for msg in conv_messages:
-        if isinstance(msg, HumanMessage):
-            role = "user"
-        elif isinstance(msg, ToolMessage):
-            role = "tool"
-        else:
-            role = "assistant"
-        
-        content = msg.content
-        if getattr(msg, "tool_calls", None) is not None:
-            for tool_call in msg.tool_calls:
-                content += f"Tool call: {tool_call['name']} with args: {tool_call['args']}"
-
-        messages.append({
-            "id": thread_id,
-            "role": role,
-            "content": content,
-        })
-    return messages
+from dto import MessageDetail
 
 def convert_arg_types(value):
     """Convert string representations to proper types"""
@@ -59,3 +39,69 @@ def getValueFromConfig(root_key, key):
         config = tomllib.load(f)
     tools_config = config.get(root_key, {})
     return tools_config[key] if key in tools_config else None
+
+
+class MessageConverter:
+    """Utilities for converting between internal LangChain format and A2A format"""
+    
+    @staticmethod
+    def langchain_to_raw(langchain_messages: List[AnyMessage]) -> List[MessageDetail]:
+        a2a_messages = []
+        
+        for msg in langchain_messages:
+            # Handle different LangChain message types
+            msg_type = msg.__class__.__name__
+            
+            if msg_type == "HumanMessage":
+                a2a_messages.append(MessageDetail(
+                    role="user",
+                    content=str(msg.content)
+                ))
+            elif msg_type == "AIMessage":
+                # Handle tool calls if present
+                tool_calls = None
+                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    tool_calls = msg.tool_calls
+                
+                a2a_messages.append(MessageDetail(
+                    role="assistant",
+                    content=str(msg.content),
+                    tool_calls=tool_calls
+                ))
+            elif msg_type == "SystemMessage":
+                a2a_messages.append(MessageDetail(
+                    role="system",
+                    content=str(msg.content)
+                ))
+            elif msg_type == "ToolMessage":
+                a2a_messages.append(MessageDetail(
+                    role="tool",
+                    content=str(msg.content),
+                    tool_call_id=getattr(msg, 'tool_call_id', None)
+                ))
+        
+        return a2a_messages
+    
+    @staticmethod
+    def raw_to_langchain(a2a_messages: List[MessageDetail]) -> List[Any]:
+        from langchain.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+        
+        langchain_messages = []
+        
+        for msg in a2a_messages:
+            if msg.role == "user":
+                langchain_messages.append(HumanMessage(content=msg.content))
+            elif msg.role == "assistant":
+                ai_msg = AIMessage(content=msg.content)
+                if msg.tool_calls:
+                    ai_msg.tool_calls = msg.tool_calls
+                langchain_messages.append(ai_msg)
+            elif msg.role == "system":
+                langchain_messages.append(SystemMessage(content=msg.content))
+            elif msg.role == "tool":
+                langchain_messages.append(ToolMessage(
+                    content=msg.content,
+                    tool_call_id=msg.tool_call_id or ""
+                ))
+        
+        return langchain_messages
